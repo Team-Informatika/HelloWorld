@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
@@ -33,11 +35,22 @@ type Message struct {
 	Author  string `json:"author" validate:"required,min=1,max=50"`
 }
 
+// User represents a user in the system
+type User struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
+
+// In-memory user store
+var users = make(map[string]*User)
 
 func main() {
 	// Create new Fiber app
@@ -60,10 +73,24 @@ func main() {
 	// Use recover middleware
 	app.Use(recover.New())
 
+	// Add compression
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelBestSpeed,
+	}))
+
+	// Add rate limiting
+	app.Use(limiter.New(limiter.Config{
+		Max:        20,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+	}))
+
 	// Configure CORS
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowMethods: "GET,POST",
+		AllowMethods: "GET,POST,PUT,DELETE",
 		AllowHeaders: "Origin, Content-Type, Accept",
 	}))
 
@@ -111,6 +138,47 @@ func main() {
 			"data":      message,
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
+	})
+
+	// Add user management endpoints
+	app.Post("/api/users", func(c *fiber.Ctx) error {
+		user := new(User)
+
+		// Parse request body
+		if err := c.BodyParser(user); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+		}
+
+		// Validate user data
+		if user.Username == "" || user.Email == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Username and email are required")
+		}
+
+		// Generate ID and set creation time
+		user.ID = fmt.Sprintf("user_%d", time.Now().Unix())
+		user.CreatedAt = time.Now()
+
+		// Store user
+		users[user.ID] = user
+
+		return c.Status(fiber.StatusCreated).JSON(user)
+	})
+
+	app.Get("/api/users/:id", func(c *fiber.Ctx) error {
+		userID := c.Params("id")
+		user, exists := users[userID]
+		if !exists {
+			return fiber.NewError(fiber.StatusNotFound, "User not found")
+		}
+		return c.JSON(user)
+	})
+
+	app.Get("/api/users", func(c *fiber.Ctx) error {
+		userList := make([]*User, 0, len(users))
+		for _, user := range users {
+			userList = append(userList, user)
+		}
+		return c.JSON(userList)
 	})
 
 	// Start server
