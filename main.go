@@ -263,6 +263,14 @@ func main() {
 		})
 	})
 
+	// Add a ping endpoint
+	app.Get("/api/ping", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message":   "pong",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
+
 	// Start server
 	log.Fatal(app.Listen(":3000"))
 }
